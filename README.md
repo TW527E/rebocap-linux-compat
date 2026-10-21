@@ -98,5 +98,34 @@ different machine from SteamVR. This setup is not tested yet.
 The connection has no authentication and no encryption. Use it only on a network you trust.
 
 
+### Bridge under Bottles / Wine with ntsync
+
+`bridge.exe` also works on its own, without SteamVR. For example,
+[rebocap-wivrn-bridge](https://github.com/akazdayo/rebocap-wivrn-bridge) uses it to feed WiVRn. It was tested with
+Rebocap in a Flatpak Bottles bottle (runner soda-11.0-10, ntsync enabled). That Wine build has problems the
+bridge now avoids:
+
+- Blocking socket calls fail. `accept` and `recv` return `WSA_IO_PENDING` and `select` returns -1. Sockets are
+  now non-blocking, and waits use `WSAEventSelect` events.
+- An overlapped pipe read can report success with 0 bytes before Wine fills in the I/O status, which drops the
+  message. A read that stays pending may never get its status. The bridge now reads only after `PeekNamedPipe`
+  reports data, and waits for the final status.
+- Killing a Wine process from the host (`kill`) crashed wineserver, which took Rebocap down with it. To stop the
+  bridge, create a `bridge.quit` file next to `bridge.exe`. The bridge deletes the file and exits.
+
+Build it on its own with:
+
+```
+x86_64-w64-mingw32-gcc -O2 -static -o bridge.exe bridge/bridge.c -lws2_32
+```
+
+Start it in the same bottle as Rebocap, while Rebocap is running:
+
+```
+flatpak run --command=bottles-cli com.usebottles.bottles run -b <bottle> -e "<path>/bridge.exe"
+```
+
+Or add it to the bottle as a program in the Bottles GUI.
+
 Reverse engineered, analyzed, and written with some LLM assistance.
 All functionality and code was verified and tested by a human with the actual hardware.

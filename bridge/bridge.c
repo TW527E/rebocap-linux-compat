@@ -20,16 +20,35 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define PIPE_NAME "\\\\.\\pipe\\Rebocap2048VRD"
 #define MAX_PAYLOAD 2044
 #define MAX_MSG (MAX_PAYLOAD + 4)
 
+/* Some Wine builds (seen with soda 11 + ntsync under Bottles) break blocking socket calls: accept and recv
+ * fail with WSA_IO_PENDING and select returns -1. Sockets are therefore non-blocking, and waits go through
+ * WSAEventSelect events, which work there. */
 struct session {
     SOCKET sock;
+    WSAEVENT sock_ev;
     HANDLE pipe;
     volatile LONG closing;
 };
+
+static char quit_path[MAX_PATH];
+
+static void logmsg(const char *fmt, ...);
+
+/* Killing a Wine process from the host can crash wineserver (seen with soda 11). To stop the bridge,
+ * create bridge.quit next to bridge.exe. */
+static void check_quit(void) {
+    if (GetFileAttributesA(quit_path) != INVALID_FILE_ATTRIBUTES) {
+        DeleteFileA(quit_path);
+        logmsg("quit requested");
+        ExitProcess(0);
+    }
+}
 
 static void logmsg(const char *fmt, ...) {
     va_list ap;
@@ -55,7 +74,15 @@ static BOOL pipe_io(HANDLE pipe, BOOL write, void *buf, DWORD len, DWORD *done) 
         return FALSE;
     }
 
-    ok = GetOverlappedResult(pipe, &ov, done, TRUE);
+    /* Under ntsync the event can fire before Wine writes the I/O status. GetOverlappedResult then reports
+     * success with 0 bytes and the message is lost. Wait until the status is final. A pending read may never
+     * get its status, so pipe_to_sock reads only when PeekNamedPipe reports data. */
+    WaitForSingleObject(ov.hEvent, INFINITE);
+    while (ov.Internal == STATUS_PENDING) {
+        SleepEx(1, TRUE);
+    }
+
+    ok = GetOverlappedResult(pipe, &ov, done, FALSE);
     CloseHandle(ov.hEvent);
 
     return ok;
@@ -70,12 +97,52 @@ static void end_session(struct session *s) {
     CancelIoEx(s->pipe, NULL);
 }
 
+/* Waits until the socket may have news (or the timeout passes) and resets the event. */
+static void sock_wait(SOCKET sock, WSAEVENT ev, DWORD ms) {
+    WSANETWORKEVENTS ne;
+    WaitForSingleObject(ev, ms);
+    WSAEnumNetworkEvents(sock, ev, &ne);
+}
+
+static BOOL send_all(struct session *s, const uint8_t *buf, int len) {
+    while (len > 0) {
+        int r = send(s->sock, (const char *)buf, len, 0);
+        if (r < 0) {
+            if (WSAGetLastError() != WSAEWOULDBLOCK || s->closing) {
+                return FALSE;
+            }
+
+            Sleep(1);
+            continue;
+        }
+
+        buf += r;
+        len -= r;
+    }
+
+    return TRUE;
+}
+
 static DWORD WINAPI pipe_to_sock(void *arg) {
     struct session *s = arg;
     uint8_t buf[4096];
     DWORD n;
 
     while (!s->closing) {
+        DWORD avail = 0;
+        if (!PeekNamedPipe(s->pipe, NULL, 0, NULL, &avail, NULL)) {
+            if (!s->closing) {
+                logmsg("pipe peek failed, error %lu", GetLastError());
+            }
+
+            break;
+        }
+
+        if (avail == 0) {
+            Sleep(1);
+            continue;
+        }
+
         if (!pipe_io(s->pipe, FALSE, buf, sizeof buf, &n)) {
             if (!s->closing) {
                 logmsg("pipe read failed, error %lu", GetLastError());
@@ -89,7 +156,7 @@ static DWORD WINAPI pipe_to_sock(void *arg) {
             continue;
         }
 
-        if (send(s->sock, (char *)buf, (int)n, 0) != (int)n) {
+        if (!send_all(s, buf, (int)n)) {
             if (!s->closing) {
                 logmsg("tcp send failed, error %d", WSAGetLastError());
             }
@@ -103,9 +170,15 @@ static DWORD WINAPI pipe_to_sock(void *arg) {
     return 0;
 }
 
-static BOOL recv_all(SOCKET sock, uint8_t *buf, int len) {
+static BOOL recv_all(struct session *s, uint8_t *buf, int len) {
     while (len > 0) {
-        int r = recv(sock, (char *)buf, len, 0);
+        int r = recv(s->sock, (char *)buf, len, 0);
+        if (r < 0 && WSAGetLastError() == WSAEWOULDBLOCK && !s->closing) {
+            check_quit();
+            sock_wait(s->sock, s->sock_ev, 100);
+            continue;
+        }
+
         if (r <= 0) {
             return FALSE;
         }
@@ -123,7 +196,7 @@ static void sock_to_pipe(struct session *s) {
     DWORD n;
 
     while (!s->closing) {
-        if (!recv_all(s->sock, buf, 4)) {
+        if (!recv_all(s, buf, 4)) {
             break;
         }
 
@@ -133,7 +206,7 @@ static void sock_to_pipe(struct session *s) {
             break;
         }
 
-        if (!recv_all(s->sock, buf + 4, (int)len)) {
+        if (!recv_all(s, buf + 4, (int)len)) {
             break;
         }
 
@@ -150,7 +223,7 @@ static void sock_to_pipe(struct session *s) {
 }
 
 /* The app may not be running yet. Retry until the TCP client disconnects. */
-static HANDLE open_pipe(SOCKET sock) {
+static HANDLE open_pipe(struct session *s) {
     for (;;) {
         DWORD mode = PIPE_READMODE_MESSAGE;
         HANDLE pipe =
@@ -168,17 +241,17 @@ static HANDLE open_pipe(SOCKET sock) {
             WaitNamedPipeA(PIPE_NAME, 1000);
         } else {
             char c;
-            fd_set rd;
-            struct timeval tv = {1, 0};
-            FD_ZERO(&rd);
-            FD_SET(sock, &rd);
+            int r;
+            check_quit();
+            sock_wait(s->sock, s->sock_ev, 1000);
+            r = recv(s->sock, &c, 1, MSG_PEEK);
 
-            if (select(0, &rd, NULL, NULL, &tv) > 0) {
-                if (recv(sock, &c, 1, MSG_PEEK) <= 0) {
-                    return INVALID_HANDLE_VALUE;
-                }
+            if (r == 0 || (r < 0 && WSAGetLastError() != WSAEWOULDBLOCK)) {
+                return INVALID_HANDLE_VALUE;
+            }
 
-                /* The driver has already sent data, so select returns at once. Wait here instead. */
+            if (r > 0) {
+                /* The driver has already sent data, so the event fires at once. Wait here instead. */
                 Sleep(1000);
             }
         }
@@ -192,7 +265,14 @@ int main(int argc, char **argv) {
     struct sockaddr_in addr = {0};
     WSADATA wsa;
     SOCKET srv;
+    WSAEVENT srv_ev;
     BOOL one = TRUE;
+    char *slash;
+
+    GetModuleFileNameA(NULL, quit_path, MAX_PATH);
+    slash = strrchr(quit_path, '\\');
+    strcpy(slash ? slash + 1 : quit_path, "bridge.quit");
+    DeleteFileA(quit_path);
 
     WSAStartup(MAKEWORD(2, 2), &wsa);
     srv = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -210,6 +290,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    srv_ev = WSACreateEvent();
+    WSAEventSelect(srv, srv_ev, FD_ACCEPT); /* also makes srv non-blocking */
     logmsg("listening on %s:%d", bind_addr, port);
 
     for (;;) {
@@ -218,15 +300,24 @@ int main(int argc, char **argv) {
 
         s.sock = accept(srv, NULL, NULL);
         if (s.sock == INVALID_SOCKET) {
+            if (WSAGetLastError() == WSAEWOULDBLOCK) {
+                check_quit();
+                sock_wait(srv, srv_ev, 1000);
+            }
+
             continue;
         }
+
+        /* The accepted socket inherits srv's event selection. Replace it. It stays non-blocking. */
+        s.sock_ev = WSACreateEvent();
+        WSAEventSelect(s.sock, s.sock_ev, FD_READ | FD_CLOSE);
 
         setsockopt(s.sock, IPPROTO_TCP, TCP_NODELAY, (char *)&one, sizeof one);
         logmsg("driver connected, opening %s", PIPE_NAME);
 
         /* Open the pipe only while a driver is connected. The app then sees a driver
          * connection only when a driver exists. */
-        s.pipe = open_pipe(s.sock);
+        s.pipe = open_pipe(&s);
         if (s.pipe != INVALID_HANDLE_VALUE) {
             logmsg("pipe open, relaying");
             thread = CreateThread(NULL, 0, pipe_to_sock, &s, 0, NULL);
@@ -241,6 +332,7 @@ int main(int argc, char **argv) {
         }
 
         closesocket(s.sock);
+        WSACloseEvent(s.sock_ev);
         logmsg("session ended");
     }
 }
