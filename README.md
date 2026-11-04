@@ -1,4 +1,43 @@
-# Rebocap on Linux SteamVR
+# rebocap-linux-compat (TW527E fork)
+
+**This fork is used without SteamVR.** I only use `bridge.exe` from it, to feed Rebocap's tracking to
+[WiVRn](https://github.com/WiVRn/WiVRn) through [akazdayo/rebocap-wivrn-bridge](https://github.com/akazdayo/rebocap-wivrn-bridge):
+
+```
+Rebocap (Wine / Bottles) <--named pipe--> bridge.exe (Wine) <--TCP--> rebocap-wivrn-bridge CLI --SolarXR--> WiVRn --> xrizer --> VRChat
+```
+
+For that setup you don't need `install.py`, the SteamVR driver, or SteamVR. The full guide, launch script and
+troubleshooting notes are in [TW527E/rebocap-linux-vrchat-fbt](https://github.com/TW527E/rebocap-linux-vrchat-fbt).
+
+What this fork changes: only `bridge/bridge.c`. It works around socket and named-pipe bugs in Wine builds with ntsync
+(tested in a Flatpak Bottles bottle, runner soda-11.0-10) and adds `bridge.quit` for a clean exit.
+See [Bridge under Bottles / Wine with ntsync](#bridge-under-bottles--wine-with-ntsync) below.
+
+Get `bridge.exe` from [Releases](https://github.com/TW527E/rebocap-linux-compat/releases), or build it:
+
+```
+x86_64-w64-mingw32-gcc -O2 -static -o bridge.exe bridge/bridge.c -lws2_32
+```
+
+Everything below is the upstream README from
+[dogesoulseller/rebocap-linux-compat](https://github.com/dogesoulseller/rebocap-linux-compat). Its SteamVR driver path
+is not used or tested in this fork.
+
+---
+
+**這個 fork 不是拿來接 SteamVR 的。** 我只用裡面的 `bridge.exe`，搭配
+[akazdayo/rebocap-wivrn-bridge](https://github.com/akazdayo/rebocap-wivrn-bridge) 把 Rebocap 的追蹤資料送進 WiVRn，
+不需要 `install.py`、SteamVR 驅動，也不需要 SteamVR。完整的教學、啟動腳本和除錯紀錄在
+[TW527E/rebocap-linux-vrchat-fbt](https://github.com/TW527E/rebocap-linux-vrchat-fbt)。
+
+這個 fork 只改了 `bridge/bridge.c`：修正 Wine + ntsync（Flatpak Bottles，runner soda-11.0-10）下 socket 和 named pipe 的問題，
+並加上 `bridge.quit` 讓 bridge 可以正常退出。編好的 `bridge.exe` 在 [Releases](https://github.com/TW527E/rebocap-linux-compat/releases)。
+下面是原專案的 README，裡面 SteamVR 驅動的部分這個 fork 沒有使用也沒有測試。
+
+---
+
+## Upstream: Rebocap on Linux SteamVR
 
 This project attempts to make Rebocap full body tracking work under Wine, and connects it to native Linux SteamVR.
 
@@ -18,7 +57,7 @@ dongle --/dev/ttyACM*--> rebocap.exe (Wine) <--named pipe--> bridge.exe (Wine) <
 The repository doesn't contain any files from the application itself. You'll need to download the Windows installer from Rebocap.
 The install script unpacks it and copies the driver's icons and input profiles from it.
 
-## Requirements
+### Requirements
 
 - SteamVR for Linux, Wine (tested with 11.15), `innoextract`
 - Build tools: `cmake`, a C++17 compiler, `mingw-w64-gcc`, OpenVR headers (`openvr` package), `nlohmann-json`.
@@ -26,7 +65,7 @@ The install script unpacks it and copies the driver's icons and input profiles f
 - A static (non-variable) sans-serif font such as Noto Sans as Wine renders variable fonts badly.
 - Permission to open the dongle's serial port. Your user must be in the group that owns `/dev/ttyACM*` (usually `uucp` on Arch-based systems, `dialout` on Debian-based systems).
 
-## Install
+### Install
 
 Close SteamVR and run:
 
@@ -47,7 +86,7 @@ Driver settings are stored in SteamVR's settings file.
 
 ***For safety do any firmware updates for the trackers and the receiver only on Windows. Do not do them under Wine.***
 
-## Use
+### Use
 
 1. Plug in the dongle and run `rebocap`. This starts the app and the bridge.
 2. Start SteamVR and connect the headset.
@@ -58,7 +97,7 @@ You can start and restart the app and SteamVR in any order.
 
 In PC mode the app sends nothing to SteamVR. The app behaves the same on Windows.
 
-### Walk-in-place
+#### Walk-in-place
 
 Walk-in-place is supported. Enable "Walk-In-Place" in the app's "Walk-In-Place & Swap Pos" section.
 The driver sets the walking speed to the thumbstick of the hand controller selected under "Ctrl Swap".
@@ -75,7 +114,7 @@ rebocap-config wip_game_reference head         # or: controller, for games that 
 `wip_game_reference` must match how the game interprets the stick.
 If it is wrong, you'll walk at an angle that changes when you turn your head or hand.
 
-### Settings
+#### Settings
 
 `rebocap-config` allows showing and changing settings for steamvr.vrsettings.
 
@@ -87,7 +126,7 @@ If it is wrong, you'll walk at an angle that changes when you turn your head or 
 | `wip_game_reference`         | `head`               | `head` or `controller`. Used only with `waist`.                                                                  |
 | `universe_fallback`          | `true`               | use raw tracking space if SteamVR's play space cannot be found                                                   |
 
-### App on one machine, SteamVR on another
+#### App on one machine, SteamVR on another
 
 The bridge and the driver communicate over TCP, so the app (with the dongle) can run on a
 different machine from SteamVR. This setup is not tested yet.
@@ -98,7 +137,7 @@ different machine from SteamVR. This setup is not tested yet.
 The connection has no authentication and no encryption. Use it only on a network you trust.
 
 
-### Bridge under Bottles / Wine with ntsync
+#### Bridge under Bottles / Wine with ntsync
 
 `bridge.exe` also works on its own, without SteamVR. For example,
 [rebocap-wivrn-bridge](https://github.com/akazdayo/rebocap-wivrn-bridge) uses it to feed WiVRn. It was tested with
