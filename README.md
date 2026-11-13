@@ -1,170 +1,158 @@
-# rebocap-linux-compat (TW527E fork)
+**简体中文** · [繁體中文](README.zh-TW.md) · [English](README.en.md) · [日本語](README.ja.md)
 
-**This fork is used without SteamVR.** I only use `bridge.exe` from it, to feed Rebocap's tracking to
-[WiVRn](https://github.com/WiVRn/WiVRn) through [akazdayo/rebocap-wivrn-bridge](https://github.com/akazdayo/rebocap-wivrn-bridge):
+# 在 Linux SteamVR 上使用 Rebocap
 
-```
-Rebocap (Wine / Bottles) <--named pipe--> bridge.exe (Wine) <--TCP--> rebocap-wivrn-bridge CLI --SolarXR--> WiVRn --> xrizer --> VRChat
-```
+本项目让 Rebocap 全身追踪在 Wine 下运行，并接入原生 Linux SteamVR。
 
-For that setup you don't need `install.py`, the SteamVR driver, or SteamVR. The full guide, launch script and
-troubleshooting notes are in [TW527E/rebocap-linux-vrchat-fbt](https://github.com/TW527E/rebocap-linux-vrchat-fbt).
+> [!TIP]
+> Rebocap 已经推出**官方 Linux 版**，自带原生 Linux SteamVR 驱动。如果你用的是 SteamVR，
+> 建议直接用官方 Linux 版，不再需要本项目。
+> 不用 SteamVR、改用 WiVRn 的话，请看
+> [TW527E/rebocap-linux-wivrn-fbt](https://github.com/TW527E/rebocap-linux-wivrn-fbt)，它同时支持官方 Linux 版和 Wine 方案。
 
-What this fork changes: only `bridge/bridge.c`. It works around socket and named-pipe bugs in Wine builds with ntsync
-(tested in a Flatpak Bottles bottle, runner soda-11.0-10) and adds `bridge.quit` for a clean exit.
-See [Bridge under Bottles / Wine with ntsync](#bridge-under-bottles--wine-with-ntsync) below.
+本仓库 fork 自 [dogesoulseller/rebocap-linux-compat](https://github.com/dogesoulseller/rebocap-linux-compat)，
+修正了 `bridge.exe` 在 Bottles／ntsync 下的问题，并加入 `bridge.quit` 安全退出方式（详见「在 Bottles／带 ntsync 的 Wine 下使用 bridge」）。
+编译好的 `bridge.exe` 可以从 [Releases](https://github.com/TW527E/rebocap-linux-compat/releases/latest) 下载。
 
-Get `bridge.exe` from [Releases](https://github.com/TW527E/rebocap-linux-compat/releases), or build it:
+本 fork 只修改了 `bridge/bridge.c`。我自己只用其中的 `bridge.exe` 搭配 WiVRn，用不到 `install.py`、SteamVR 驱动和 SteamVR；
+下面 SteamVR 驱动的安装和使用说明来自原项目，本 fork 没有使用也没有测试。
 
-```
-x86_64-w64-mingw32-gcc -O2 -static -o bridge.exe bridge/bridge.c -lws2_32
-```
+## 工作原理
 
-Everything below is the upstream README from
-[dogesoulseller/rebocap-linux-compat](https://github.com/dogesoulseller/rebocap-linux-compat). Its SteamVR driver path
-is not used or tested in this fork.
+Rebocap 的 Windows 安装包分成三部分：
 
----
+- GUI 程序：负责和 USB 接收器通信，并完成全部姿态解算
+- SteamVR 驱动 DLL
+- 两者之间的 named pipe
 
-**這個 fork 不是拿來接 SteamVR 的。** 我只用裡面的 `bridge.exe`，搭配
-[akazdayo/rebocap-wivrn-bridge](https://github.com/akazdayo/rebocap-wivrn-bridge) 把 Rebocap 的追蹤資料送進 WiVRn，
-不需要 `install.py`、SteamVR 驅動，也不需要 SteamVR。完整的教學、啟動腳本和除錯紀錄在
-[TW527E/rebocap-linux-vrchat-fbt](https://github.com/TW527E/rebocap-linux-vrchat-fbt)。
-
-這個 fork 只改了 `bridge/bridge.c`：修正 Wine + ntsync（Flatpak Bottles，runner soda-11.0-10）下 socket 和 named pipe 的問題，
-並加上 `bridge.quit` 讓 bridge 可以正常退出。編好的 `bridge.exe` 在 [Releases](https://github.com/TW527E/rebocap-linux-compat/releases)。
-下面是原專案的 README，裡面 SteamVR 驅動的部分這個 fork 沒有使用也沒有測試。
-
----
-
-## Upstream: Rebocap on Linux SteamVR
-
-This project attempts to make Rebocap full body tracking work under Wine, and connects it to native Linux SteamVR.
-
-Rebocap's Windows package has three parts:
-
-The app runs under Wine without any changes.
-This project replaces the application's steamvr DLL with a native driver that uses the same protocol.
-
-- the GUI app, which talks to the USB dongle and does all pose estimation
-- a SteamVR driver DLL
-- a named pipe between them
+GUI 程序不经任何修改直接在 Wine 下运行。本项目用一个使用相同协议的原生 Linux 驱动，取代原本的 SteamVR DLL：
 
 ```
-dongle --/dev/ttyACM*--> rebocap.exe (Wine) <--named pipe--> bridge.exe (Wine) <--TCP--> driver_rebocap.so (vrserver)
+接收器 --/dev/ttyACM*--> rebocap.exe（Wine）<--named pipe--> bridge.exe（Wine）<--TCP--> driver_rebocap.so（vrserver）
 ```
 
-The repository doesn't contain any files from the application itself. You'll need to download the Windows installer from Rebocap.
-The install script unpacks it and copies the driver's icons and input profiles from it.
+本仓库不包含 Rebocap 程序本身的任何文件，你需要自行从 Rebocap 官网下载 Windows 安装包。
+安装脚本会解包安装包，并从中复制驱动需要的图标和输入配置文件。通信协议见 [docs/protocol.md](docs/protocol.md)。
 
-### Requirements
+## 需求
 
-- SteamVR for Linux, Wine (tested with 11.15), `innoextract`
-- Build tools: `cmake`, a C++17 compiler, `mingw-w64-gcc`, OpenVR headers (`openvr` package), `nlohmann-json`.
-  The development tools in `tools/` and `driver/test/` also need `protoc` and the Python `protobuf` package.
-- A static (non-variable) sans-serif font such as Noto Sans as Wine renders variable fonts badly.
-- Permission to open the dongle's serial port. Your user must be in the group that owns `/dev/ttyACM*` (usually `uucp` on Arch-based systems, `dialout` on Debian-based systems).
+- Linux 版 SteamVR、Wine（已在 11.15 测试）、`innoextract`
+- 构建工具：`cmake`、支持 C++17 的编译器、`mingw-w64-gcc`、OpenVR 头文件（`openvr` 软件包）、`nlohmann-json`。
+  `tools/` 和 `driver/test/` 里的开发工具另外需要 `protoc` 和 Python 的 `protobuf` 包。
+- 一个静态（非可变）的无衬线字体，例如 Noto Sans。Wine 渲染可变字体效果很差。
+- 打开接收器串口的权限：你的用户必须在拥有 `/dev/ttyACM*` 的组里（Arch 系通常是 `uucp`，Debian 系通常是 `dialout`）。
 
-### Install
+## 安装
 
-Close SteamVR and run:
+先关闭 SteamVR，然后运行：
 
 ```
 ./install.py /path/to/rebocap_release_vXX.exe
 ```
 
-The script installs the utils into `~/.local/share/rebocap-linux` (change with `--home DIR` if desired),
-registers the driver with SteamVR, and creates a `rebocap` command with desktop entry.
+脚本会把工具安装到 `~/.local/share/rebocap-linux`（可以用 `--home DIR` 修改），
+向 SteamVR 注册驱动，并创建 `rebocap` 命令和桌面启动项。
 
-- **Update after pulling changes:** run `./install.py` with no arguments.
-  This will redo the entire install process for the Linux side of things without modifying the Rebocap install.
-- **Newer vendor release:** run `./install.py` with the new installer.
-  It replaces the app's program files and keeps the data that the app created (device info, recordings).
-- **Uninstall:** `./install.py --uninstall` unregisters the driver and removes the launchers. Doesn't touch the Rebocap install.
+- **拉取更新后：** 不带参数运行 `./install.py`。
+  会重新执行 Linux 这一侧的完整安装流程，不会改动 Rebocap 本体的安装。
+- **厂商发布新版本时：** 用新的安装包运行 `./install.py`。
+  会替换程序文件，保留程序产生的数据（设备信息、录制内容）。
+- **卸载：** `./install.py --uninstall` 会注销驱动并删除启动项，不会动 Rebocap 本体的安装。
 
-Driver settings are stored in SteamVR's settings file.
+驱动设置保存在 SteamVR 的设置文件里。
 
-***For safety do any firmware updates for the trackers and the receiver only on Windows. Do not do them under Wine.***
+> [!WARNING]
+> **为了安全，追踪器和接收器的固件更新请只在 Windows（或官方 Linux 版）上进行，不要在 Wine 下更新。**
 
-### Use
+## 使用
 
-1. Plug in the dongle and run `rebocap`. This starts the app and the bridge.
-2. Start SteamVR and connect the headset.
-3. Choose VR mode in Rebocap. The SteamVR indicator turns green when the driver is connected.
-   Calibrate with the headset on, the trackers should appear in SteamVR (same like)
+1. 插上接收器并运行 `rebocap`，它会同时启动程序和 bridge。
+2. 启动 SteamVR 并连接头显。
+3. 在 Rebocap 里选择 VR 模式。驱动连上之后，SteamVR 的指示灯会变绿。
+   戴着头显校准，追踪器就会出现在 SteamVR 里（和 Windows 上一样）。
 
-You can start and restart the app and SteamVR in any order.
+程序和 SteamVR 的启动、重启顺序不限。
 
-In PC mode the app sends nothing to SteamVR. The app behaves the same on Windows.
+PC 模式下程序不会向 SteamVR 发送任何数据，Windows 上也是如此。
 
-#### Walk-in-place
+### 原地踏步行走（Walk-in-place）
 
-Walk-in-place is supported. Enable "Walk-In-Place" in the app's "Walk-In-Place & Swap Pos" section.
-The driver sets the walking speed to the thumbstick of the hand controller selected under "Ctrl Swap".
-If you push the real stick while walking, it sets the direction. When you stop walking, the real stick works normally again.
+支持原地踏步行走。在程序的「Walk-In-Place & Swap Pos」区域启用「Walk-In-Place」。
+驱动会把行走速度写到「Ctrl Swap」所选手柄的摇杆上。
+走动时推动真实摇杆可以决定方向；停止走动后，真实摇杆恢复正常。
 
-By default the driver pushes the stick forward, and the game decides which direction that is.
-To walk in the direction your hips face, close SteamVR and run:
+默认情况下驱动把摇杆往前推，往哪个方向走由游戏决定。
+想朝髋部面向的方向走，先关闭 SteamVR，再运行：
 
 ```
 rebocap-config wip_direction waist
-rebocap-config wip_game_reference head         # or: controller, for games that move you where the hand points
+rebocap-config wip_game_reference head         # 或 controller：适用于朝手指方向移动的游戏
 ```
 
-`wip_game_reference` must match how the game interprets the stick.
-If it is wrong, you'll walk at an angle that changes when you turn your head or hand.
+`wip_game_reference` 必须和游戏解读摇杆的方式一致。
+设错的话，你会斜着走，而且角度会随着转头或转手改变。
 
-#### Settings
+### 设置
 
-`rebocap-config` allows showing and changing settings for steamvr.vrsettings.
+`rebocap-config` 可以查看和修改 steamvr.vrsettings 里的设置。
 
-| key                          | default              | meaning                                                                                                          |
-|------------------------------|----------------------|------------------------------------------------------------------------------------------------------------------|
-| `bridge_host`, `bridge_port` | `127.0.0.1`, `36850` | where `bridge.exe` listens                                                                                       |
-| `input_hooks`                | `true`               | lets walk-in-place and hand pose replacement change the hand controllers' input and poses (see "Things to know") |
-| `wip_direction`              | `game`               | `game` or `waist`                                                                                                |
-| `wip_game_reference`         | `head`               | `head` or `controller`. Used only with `waist`.                                                                  |
-| `universe_fallback`          | `true`               | use raw tracking space if SteamVR's play space cannot be found                                                   |
+| 键 | 默认值 | 含义 |
+|---|---|---|
+| `bridge_host`、`bridge_port` | `127.0.0.1`、`36850` | `bridge.exe` 监听的地址 |
+| `input_hooks` | `true` | 允许原地踏步行走和手部姿势替换修改手柄的输入与姿势 |
+| `wip_direction` | `game` | `game` 或 `waist` |
+| `wip_game_reference` | `head` | `head` 或 `controller`，只在 `waist` 时使用 |
+| `universe_fallback` | `true` | 找不到 SteamVR 的游玩区时，改用原始追踪空间 |
 
-#### App on one machine, SteamVR on another
+### 程序和 SteamVR 在不同电脑上
 
-The bridge and the driver communicate over TCP, so the app (with the dongle) can run on a
-different machine from SteamVR. This setup is not tested yet.
+bridge 和驱动之间走 TCP，所以程序（连着接收器）可以和 SteamVR 跑在不同电脑上。这种用法尚未测试。
 
-- On the app's machine, start the app with `BRIDGE_BIND=0.0.0.0 rebocap`.
-- On the SteamVR machine, run `rebocap-config bridge_host <address of the app's machine>`.
+- 在运行程序的电脑上，用 `BRIDGE_BIND=0.0.0.0 rebocap` 启动程序。
+- 在运行 SteamVR 的电脑上，运行 `rebocap-config bridge_host <程序所在电脑的地址>`。
 
-The connection has no authentication and no encryption. Use it only on a network you trust.
+这个连接没有认证也没有加密，请只在信任的网络里使用。
 
+### 在 Bottles／带 ntsync 的 Wine 下使用 bridge
 
-#### Bridge under Bottles / Wine with ntsync
+`bridge.exe` 也能单独使用，不需要 SteamVR。例如
+[rebocap-wivrn-bridge](https://github.com/TW527E/rebocap-wivrn-bridge)（fork 自 [akazdayo/rebocap-wivrn-bridge](https://github.com/akazdayo/rebocap-wivrn-bridge)）就用它把数据送进 WiVRn。
+本 fork 在 Flatpak Bottles 里的 Rebocap 上测试过（runner soda-11.0-10，启用 ntsync）。这个 Wine 版本有以下问题，bridge 现在都会避开：
 
-`bridge.exe` also works on its own, without SteamVR. For example,
-[rebocap-wivrn-bridge](https://github.com/akazdayo/rebocap-wivrn-bridge) uses it to feed WiVRn. It was tested with
-Rebocap in a Flatpak Bottles bottle (runner soda-11.0-10, ntsync enabled). That Wine build has problems the
-bridge now avoids:
+- 阻塞式 socket 调用会失败：`accept` 和 `recv` 返回 `WSA_IO_PENDING`，`select` 返回 -1。
+  现在 socket 改为非阻塞，等待改用 `WSAEventSelect` 事件。
+- overlapped 方式读 pipe 时，可能在 Wine 填好 I/O 状态之前就回报成功、读到 0 字节，导致消息丢失；
+  一直挂起的读取也可能永远拿不到状态。现在 bridge 只在 `PeekNamedPipe` 回报有数据时才读取，并等待最终状态。
+- 从主机端 `kill` Wine 进程会让 wineserver 崩溃，连带 Rebocap 一起挂掉。要停止 bridge，
+  请在 `bridge.exe` 旁边创建 `bridge.quit` 文件，bridge 会删除这个文件并自行退出。
 
-- Blocking socket calls fail. `accept` and `recv` return `WSA_IO_PENDING` and `select` returns -1. Sockets are
-  now non-blocking, and waits use `WSAEventSelect` events.
-- An overlapped pipe read can report success with 0 bytes before Wine fills in the I/O status, which drops the
-  message. A read that stays pending may never get its status. The bridge now reads only after `PeekNamedPipe`
-  reports data, and waits for the final status.
-- Killing a Wine process from the host (`kill`) crashed wineserver, which took Rebocap down with it. To stop the
-  bridge, create a `bridge.quit` file next to `bridge.exe`. The bridge deletes the file and exits.
-
-Build it on its own with:
+单独构建：
 
 ```
 x86_64-w64-mingw32-gcc -O2 -static -o bridge.exe bridge/bridge.c -lws2_32
 ```
 
-Start it in the same bottle as Rebocap, while Rebocap is running:
+也可以直接从 [Releases](https://github.com/TW527E/rebocap-linux-compat/releases/latest) 下载 `bridge.exe`。
+
+在 Rebocap 运行时，在同一个 bottle 里启动它：
 
 ```
 flatpak run --command=bottles-cli com.usebottles.bottles run -b <bottle> -e "<path>/bridge.exe"
 ```
 
-Or add it to the bottle as a program in the Bottles GUI.
+或者在 Bottles 界面里把它加成这个 bottle 的程序。
 
-Reverse engineered, analyzed, and written with some LLM assistance.
-All functionality and code was verified and tested by a human with the actual hardware.
+`bridge.exe` 支持参数 `bridge.exe [绑定地址] [端口]`，默认是 `127.0.0.1 36850`。
+
+## 相关项目
+
+| 项目 | 用途 |
+|---|---|
+| [TW527E/rebocap-linux-wivrn-fbt](https://github.com/TW527E/rebocap-linux-wivrn-fbt) | Linux + WiVRn + VRChat 全身追踪的完整教程与启动脚本 |
+| [TW527E/rebocap-wivrn-bridge](https://github.com/TW527E/rebocap-wivrn-bridge) | 把 Rebocap 的追踪器经 SolarXR 送进 WiVRn 的 CLI |
+| [TW527E/rebocap-wine](https://github.com/TW527E/rebocap-wine) | setupapi 补丁，让 Wine 里的 Rebocap 识别接收器 |
+
+---
+
+本项目经逆向工程与分析完成，编写过程中使用了部分 LLM 辅助。
+所有功能和代码都由人在实际硬件上验证和测试过。
