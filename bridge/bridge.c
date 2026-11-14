@@ -77,7 +77,10 @@ static BOOL pipe_io(HANDLE pipe, BOOL write, void *buf, DWORD len, DWORD *done) 
     /* Under ntsync the event can fire before Wine writes the I/O status. GetOverlappedResult then reports
      * success with 0 bytes and the message is lost. Wait until the status is final. A pending read may never
      * get its status, so pipe_to_sock reads only when PeekNamedPipe reports data. */
-    WaitForSingleObject(ov.hEvent, INFINITE);
+    /* Wake up periodically so bridge.quit still works while the app has stopped reading or writing. */
+    while (WaitForSingleObject(ov.hEvent, 1000) == WAIT_TIMEOUT) {
+        check_quit();
+    }
     while (ov.Internal == STATUS_PENDING) {
         SleepEx(1, TRUE);
     }
@@ -237,12 +240,16 @@ static HANDLE open_pipe(struct session *s) {
             return pipe;
         }
 
-        if (GetLastError() == ERROR_PIPE_BUSY) {
+        DWORD err = GetLastError();
+
+        /* Check on every retry, including while another client holds the pipe. */
+        check_quit();
+
+        if (err == ERROR_PIPE_BUSY) {
             WaitNamedPipeA(PIPE_NAME, 1000);
         } else {
             char c;
             int r;
-            check_quit();
             sock_wait(s->sock, s->sock_ev, 1000);
             r = recv(s->sock, &c, 1, MSG_PEEK);
 
@@ -268,10 +275,23 @@ int main(int argc, char **argv) {
     WSAEVENT srv_ev;
     BOOL one = TRUE;
     char *slash;
+    DWORD path_len = GetModuleFileNameA(NULL, quit_path, MAX_PATH);
+    size_t dir_len;
 
-    GetModuleFileNameA(NULL, quit_path, MAX_PATH);
+    if (path_len == 0 || path_len >= MAX_PATH) {
+        logmsg("cannot resolve the bridge.exe path (error %lu); install it in a shorter folder", GetLastError());
+        return 1;
+    }
+
     slash = strrchr(quit_path, '\\');
-    strcpy(slash ? slash + 1 : quit_path, "bridge.quit");
+    dir_len = slash ? (size_t)(slash + 1 - quit_path) : 0;
+
+    if (dir_len + sizeof "bridge.quit" > sizeof quit_path) {
+        logmsg("install path is too long for bridge.quit; move bridge.exe to a shorter folder");
+        return 1;
+    }
+
+    memcpy(quit_path + dir_len, "bridge.quit", sizeof "bridge.quit");
     DeleteFileA(quit_path);
 
     WSAStartup(MAKEWORD(2, 2), &wsa);
